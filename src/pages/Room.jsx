@@ -337,7 +337,7 @@ export default function Room() {
               <span style={S.logoText}>Codex</span>
             </div>
             <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
-              {["Dashboard", "Matches", "Problems", "Leaderboard"].map(label => (
+              {["Dashboard", "Matches", "Problem", "Leaderboard"].map(label => (
                 <button key={label} className="cx-nav-link" style={S.navLink} onClick={() => navigate(`/${label.toLowerCase()}`)}>{label}</button>
               ))}
               <button style={S.navLinkActive}>Rooms</button>
