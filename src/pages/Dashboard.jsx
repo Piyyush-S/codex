@@ -33,14 +33,14 @@ const MATCH_TYPES = [
   {
     id: "ranked",
     label: "Ranked",
-    desc: "20 min · 2 problems",
+    desc: "20 min · 2 problem",
     icon: "🏆",
     tag: "ELO",
   },
   {
     id: "marathon",
     label: "Marathon",
-    desc: "60 min · 5 problems",
+    desc: "60 min · 5 problem",
     icon: "🏃",
     tag: "HARD",
   },
@@ -67,7 +67,7 @@ const MATCH_TYPES = [
   },
 ];
 
-const NAV_ITEMS = ["Dashboard", "Matches", "Problems", "Leaderboard", "Rooms"];
+const NAV_ITEMS = ["Dashboard", "Matches", "Problem", "Leaderboard", "Rooms"];
 
 /* ─────────────────────────────────────────────
    MAIN COMPONENT
@@ -224,7 +224,37 @@ export default function Dashboard() {
               <span
                 key={item}
                 className={`nav-item${activeNav === item ? " active" : ""}`}
-                onClick={() => setActiveNav(item)}
+                onClick={() => {
+
+                  setActiveNav(item);
+
+                  switch (item) {
+
+                    case "Dashboard":
+                      navigate("/dashboard");
+                      break;
+
+                    case "Problem":
+                      navigate("/problem");
+                      break;
+
+                    case "Matches":
+                      navigate("/matches");
+                      break;
+
+                    case "Leaderboard":
+                      navigate("/leaderboard");
+                      break;
+
+                    case "Rooms":
+                      navigate("/rooms");
+                      break;
+
+                    default:
+                      break;
+                  }
+
+                }}
               >
                 {item}
               </span>
