@@ -42,10 +42,8 @@
   position: absolute;
   inset: 0;
   pointer-events: none;
-  background-image: linear-gradient(
-      rgba(255, 255, 255, 0.04) 1px,
-      transparent 1px
-    ),
+  background-image: linear-gradient(rgba(255, 255, 255, 0.04) 1px,
+      transparent 1px),
     linear-gradient(90deg, rgba(255, 255, 255, 0.04) 1px, transparent 1px);
   background-size: 52px 52px;
   animation: lp-fade 1s ease both;
@@ -58,11 +56,9 @@
   width: 700px;
   height: 700px;
   border-radius: 50%;
-  background: radial-gradient(
-    circle,
-    rgba(255, 255, 255, 0.07) 0%,
-    transparent 60%
-  );
+  background: radial-gradient(circle,
+      rgba(255, 255, 255, 0.07) 0%,
+      transparent 60%);
   top: -280px;
   left: -240px;
   animation: lp-blob 8s ease-in-out infinite alternate;
@@ -73,6 +69,7 @@
     transform: scale(1) translate(0, 0);
     opacity: 0.7;
   }
+
   to {
     transform: scale(1.15) translate(30px, 40px);
     opacity: 1;
@@ -235,11 +232,30 @@
   animation: lp-up 0.4s ease forwards;
 }
 
-.lp-term-line:nth-child(1) { animation-delay: 0.5s;  color: #888; }
-.lp-term-line:nth-child(2) { animation-delay: 0.75s; color: #aaa; }
-.lp-term-line:nth-child(3) { animation-delay: 1s;    color: #fff; }
-.lp-term-line:nth-child(4) { animation-delay: 1.25s; color: #aaa; }
-.lp-term-line:nth-child(5) { animation-delay: 1.5s;  color: #555; }
+.lp-term-line:nth-child(1) {
+  animation-delay: 0.5s;
+  color: #888;
+}
+
+.lp-term-line:nth-child(2) {
+  animation-delay: 0.75s;
+  color: #aaa;
+}
+
+.lp-term-line:nth-child(3) {
+  animation-delay: 1s;
+  color: #fff;
+}
+
+.lp-term-line:nth-child(4) {
+  animation-delay: 1.25s;
+  color: #aaa;
+}
+
+.lp-term-line:nth-child(5) {
+  animation-delay: 1.5s;
+  color: #555;
+}
 
 /* blinking cursor on last line */
 .lp-term-line:last-child::after {
@@ -248,8 +264,15 @@
 }
 
 @keyframes lp-blink {
-  0%, 100% { opacity: 1; }
-  50%      { opacity: 0; }
+
+  0%,
+  100% {
+    opacity: 1;
+  }
+
+  50% {
+    opacity: 0;
+  }
 }
 
 /* ── Stats ── */
@@ -411,7 +434,7 @@
   border: 1.5px solid #e8e8e5;
   outline: none;
   transition: border-color 0.18s, background 0.18s, box-shadow 0.18s;
-  -webkit-appearance: none;
+  appearance: none;
 }
 
 .lp-input::placeholder {
@@ -527,12 +550,10 @@
   left: -100%;
   width: 60%;
   height: 100%;
-  background: linear-gradient(
-    90deg,
-    transparent,
-    rgba(255, 255, 255, 0.1),
-    transparent
-  );
+  background: linear-gradient(90deg,
+      transparent,
+      rgba(255, 255, 255, 0.1),
+      transparent);
   transition: left 0.65s ease;
 }
 
@@ -614,13 +635,25 @@
    Keyframes
    ═══════════════════════════════════════════════════ */
 @keyframes lp-fade {
-  from { opacity: 0; }
-  to   { opacity: 1; }
+  from {
+    opacity: 0;
+  }
+
+  to {
+    opacity: 1;
+  }
 }
 
 @keyframes lp-pulse {
-  0%, 100% { opacity: 1; }
-  50%      { opacity: 0.25; }
+
+  0%,
+  100% {
+    opacity: 1;
+  }
+
+  50% {
+    opacity: 0.25;
+  }
 }
 
 @keyframes lp-up {
@@ -628,6 +661,7 @@
     opacity: 0;
     transform: translateY(16px);
   }
+
   to {
     opacity: 1;
     transform: translateY(0);
@@ -639,6 +673,7 @@
     opacity: 0;
     transform: translateY(-50%) scale(0.4);
   }
+
   to {
     opacity: 1;
     transform: translateY(-50%) scale(1);
@@ -646,7 +681,9 @@
 }
 
 @keyframes lp-spin {
-  to { transform: rotate(360deg); }
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 /* ═══════════════════════════════════════════════════
