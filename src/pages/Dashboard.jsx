@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useLocation } from "react-router-dom";
 import { auth, db } from "../firebase";
 import { onAuthStateChanged, signOut } from "firebase/auth";
 import {
@@ -16,6 +16,7 @@ import {
 /* ─────────────────────────────────────────────
    CONSTANTS
 ───────────────────────────────────────────── */
+
 const LANGUAGES = [
   "Python", "JavaScript", "TypeScript", "C++", "C", "C#",
   "Java", "Go", "Rust", "Kotlin", "Swift", "Ruby",
@@ -23,134 +24,104 @@ const LANGUAGES = [
 ];
 
 const MATCH_TYPES = [
-  {
-    id: "blitz",
-    label: "Blitz",
-    desc: "5 min · 1 problem",
-    icon: "⚡",
-    tag: "FAST",
-  },
-  {
-    id: "ranked",
-    label: "Ranked",
-    desc: "20 min · 2 problem",
-    icon: "🏆",
-    tag: "ELO",
-  },
-  {
-    id: "marathon",
-    label: "Marathon",
-    desc: "60 min · 5 problem",
-    icon: "🏃",
-    tag: "HARD",
-  },
-  {
-    id: "team",
-    label: "Team 2v2",
-    desc: "30 min · collaborative",
-    icon: "👥",
-    tag: "TEAM",
-  },
-  {
-    id: "practice",
-    label: "Practice",
-    desc: "No timer · unranked",
-    icon: "📚",
-    tag: "FREE",
-  },
-  {
-    id: "custom",
-    label: "Custom Room",
-    desc: "Set your own rules",
-    icon: "⚙️",
-    tag: "ROOM",
-  },
+  { id: "blitz",    label: "Blitz",       desc: "5 min · 1 problem",      tag: "FAST" },
+  { id: "ranked",   label: "Ranked",      desc: "20 min · 2 problems",    tag: "ELO"  },
+  { id: "marathon", label: "Marathon",    desc: "60 min · 5 problems",    tag: "HARD" },
+  { id: "team",     label: "Team 2v2",    desc: "30 min · collaborative", tag: "TEAM" },
+  { id: "practice", label: "Practice",   desc: "No timer · unranked",    tag: "FREE" },
+  { id: "custom",   label: "Custom Room", desc: "Set your own rules",     tag: "ROOM" },
 ];
 
-const NAV_ITEMS = ["Dashboard", "Matches", "Problem", "Leaderboard", "Rooms"];
+const NAV_ROUTES = [
+  { label: "Dashboard",   path: "/dashboard" },
+  { label: "Matches",     path: "/matches"   },
+  { label: "Problems",    path: "/problems"  },
+  { label: "Leaderboard", path: "/leaderboard" },
+  { label: "Rooms",       path: "/rooms"     },
+];
+
+function generateRoomCode() {
+  const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+  return Array.from({ length: 6 }, () => chars[Math.floor(Math.random() * chars.length)]).join("");
+}
+
+function getRankLabel(rating) {
+  if (!rating)        return "Unranked";
+  if (rating >= 2000) return "Grandmaster";
+  if (rating >= 1800) return "Master";
+  if (rating >= 1600) return "Diamond";
+  if (rating >= 1400) return "Platinum";
+  if (rating >= 1200) return "Gold";
+  return "Silver";
+}
 
 /* ─────────────────────────────────────────────
    MAIN COMPONENT
 ───────────────────────────────────────────── */
+
 export default function Dashboard() {
-  const navigate = useNavigate();
+  const navigate  = useNavigate();
+  const location  = useLocation();
 
-  const [user, setUser] = useState(null);
-  const [stats, setStats] = useState(null);
-  const [recent, setRecent] = useState([]);
-  const [username, setUsername] = useState("");
-  const [activeNav, setActiveNav] = useState("Dashboard");
-
-  // Match modal
-  const [showMatchModal, setShowMatchModal] = useState(false);
+  const [user,         setUser]         = useState(null);
+  const [stats,        setStats]        = useState(null);
+  const [recent,       setRecent]       = useState([]);
+  const [username,     setUsername]     = useState("");
+  const [showModal,    setShowModal]    = useState(false);
   const [selectedLang, setSelectedLang] = useState("Python");
   const [selectedType, setSelectedType] = useState("ranked");
-  const [roomCode, setRoomCode] = useState("");
-  const [matchLoading, setMatchLoading] = useState(false);
-  const [matchStep, setMatchStep] = useState("select"); // select | searching | found
-
-  // Profile sidebar
-  const [showProfile, setShowProfile] = useState(false);
+  const [roomCode,     setRoomCode]     = useState("");
+  const [matchStep,    setMatchStep]    = useState("select"); // select | searching | found
+  const [showProfile,  setShowProfile]  = useState(false);
 
   /* ── AUTH ── */
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, async (u) => {
-      if (!u) {
-        navigate("/login");
-      } else {
-        setUser(u);
-        await fetchUserData(u.uid);
-        await fetchRecentMatches(u.uid);
+      if (!u) { navigate("/login"); return; }
+      setUser(u);
+      const snap = await getDoc(doc(db, "users", u.uid));
+      if (snap.exists()) {
+        setStats(snap.data());
+        setUsername(snap.data().username || u.displayName || u.email?.split("@")[0]);
       }
+      try {
+        const q = query(
+          collection(db, "matches"),
+          where("players", "array-contains", u.uid),
+          orderBy("createdAt", "desc"),
+          limit(8)
+        );
+        const ms = await getDocs(q);
+        setRecent(ms.docs.map(d => ({ id: d.id, ...d.data() })));
+      } catch { setRecent([]); }
     });
     return () => unsub();
   }, []);
 
-  /* ── FETCH USER ── */
-  const fetchUserData = async (uid) => {
-    const snap = await getDoc(doc(db, "users", uid));
-    if (snap.exists()) {
-      const data = snap.data();
-      setStats(data);
-      setUsername(data.username);
-    }
-  };
-
-  /* ── FETCH MATCHES ── */
-  const fetchRecentMatches = async (uid) => {
-    try {
-      const q = query(
-        collection(db, "matches"),
-        where("players", "array-contains", uid),
-        orderBy("createdAt", "desc"),
-        limit(8)
-      );
-      const snap = await getDocs(q);
-      setRecent(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
-    } catch {
-      setRecent([]);
-    }
-  };
-
   /* ── MATCH FLOW ── */
-  const handleStartMatch = () => {
-    setMatchLoading(true);
+  const openModal = (type = "ranked") => {
+    setSelectedType(type);
+    setMatchStep("select");
+    setRoomCode("");
+    setShowModal(true);
+  };
+
+  const handleFindMatch = () => {
     setMatchStep("searching");
-    // Simulate matchmaking — replace with your actual logic
     setTimeout(() => {
       setMatchStep("found");
       setTimeout(() => {
-        setMatchLoading(false);
-        setShowMatchModal(false);
+        setShowModal(false);
         setMatchStep("select");
-        navigate(`/room/demo-room`);
-      }, 1200);
+        navigate(`/room/${generateRoomCode()}`);
+      }, 1000);
     }, 2500);
   };
 
   const handleJoinRoom = () => {
-    if (!roomCode.trim()) return;
-    navigate(`/room/${roomCode.trim().toLowerCase()}`);
+    const code = roomCode.trim().toUpperCase().replace(/[^A-Z0-9]/g, "");
+    if (code.length !== 6) return;
+    navigate(`/room/${code}`);
   };
 
   const logout = async () => {
@@ -160,20 +131,8 @@ export default function Dashboard() {
 
   /* ── DERIVED ── */
   const winRate = stats
-    ? Math.round((stats.wins / (stats.wins + stats.losses || 1)) * 100)
+    ? Math.round((stats.wins / ((stats.wins + stats.losses) || 1)) * 100)
     : 0;
-
-  const getRankLabel = (rating) => {
-    if (!rating) return { label: "Unranked", color: "#444" };
-    if (rating >= 2000) return { label: "Grandmaster", color: "#0a0a0a" };
-    if (rating >= 1800) return { label: "Master", color: "#0a0a0a" };
-    if (rating >= 1600) return { label: "Diamond", color: "#0a0a0a" };
-    if (rating >= 1400) return { label: "Platinum", color: "#0a0a0a" };
-    if (rating >= 1200) return { label: "Gold", color: "#0a0a0a" };
-    return { label: "Silver", color: "#0a0a0a" };
-  };
-
-  const rank = getRankLabel(stats?.rating);
 
   /* ─────────────────────────────────────────
      RENDER
@@ -181,206 +140,297 @@ export default function Dashboard() {
   return (
     <>
       <style>{`
-        @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&family=Syne:wght@400;600;700;800&display=swap');
+        @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Inter:wght@400;500;600;700;800&display=swap');
         *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-        body { background: #f5f5f3; }
-        @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.3} }
-        @keyframes spin { to{transform:rotate(360deg)} }
-        @keyframes fadeUp { from{opacity:0;transform:translateY(12px)} to{opacity:1;transform:translateY(0)} }
-        @keyframes searchPulse { 0%,100%{transform:scale(1)} 50%{transform:scale(1.05)} }
-        ::-webkit-scrollbar { width: 4px; }
-        ::-webkit-scrollbar-track { background: transparent; }
-        ::-webkit-scrollbar-thumb { background: #ddd; border-radius: 4px; }
-        .nav-item { cursor:pointer; padding:6px 12px; border-radius:6px; font-family:'Syne',sans-serif; font-size:13px; font-weight:600; color:#888; transition:all 0.15s; }
-        .nav-item:hover { color:#0a0a0a; background:#f0f0ee; }
-        .nav-item.active { color:#0a0a0a; background:#ebebea; }
-        .action-btn { cursor:pointer; font-family:'Syne',sans-serif; font-weight:700; transition:all 0.15s; border:none; }
-        .action-btn:hover { transform:translateY(-1px); }
-        .action-btn:active { transform:translateY(0); }
-        .lang-chip { cursor:pointer; padding:6px 12px; border-radius:6px; font-family:'JetBrains Mono',monospace; font-size:12px; border:1px solid #e0e0e0; background:#f9f9f9; color:#555; transition:all 0.15s; }
-        .lang-chip:hover { border-color:#0a0a0a; color:#0a0a0a; }
-        .lang-chip.selected { background:#0a0a0a; color:#fff; border-color:#0a0a0a; }
-        .match-type-card { cursor:pointer; padding:16px; border-radius:10px; border:1px solid #e8e8e8; background:#fff; transition:all 0.15s; }
-        .match-type-card:hover { border-color:#0a0a0a; transform:translateY(-1px); }
-        .match-type-card.selected { border-color:#0a0a0a; border-width:2px; background:#fafafa; }
-        .stat-card { background:#fff; border:1px solid #ebebea; border-radius:12px; padding:20px 24px; }
-        .recent-row { display:flex; align-items:center; gap:12px; padding:12px 0; border-bottom:1px solid #f0f0ee; font-family:'JetBrains Mono',monospace; font-size:12px; }
-        .recent-row:last-child { border-bottom:none; }
-        .overlay { position:fixed; inset:0; background:rgba(0,0,0,0.4); z-index:100; display:flex; align-items:center; justify-content:center; animation:fadeUp 0.2s ease; }
-        .modal { background:#fff; border-radius:16px; padding:32px; width:100%; max-width:600px; max-height:88vh; overflow-y:auto; position:relative; }
-        .profile-drawer { position:fixed; right:0; top:0; bottom:0; width:300px; background:#fff; border-left:1px solid #ebebea; z-index:200; padding:32px 24px; animation:fadeUp 0.2s; display:flex; flex-direction:column; gap:20px; }
-        input[type=text]:focus { outline:none; }
+        body { background: #F5F5F3; font-family: 'Inter', system-ui, sans-serif; }
+
+        ::-webkit-scrollbar { width: 4px; height: 4px; }
+        ::-webkit-scrollbar-thumb { background: #DDD; border-radius: 4px; }
+
+        @keyframes pulse  { 0%,100%{opacity:1} 50%{opacity:0.25} }
+        @keyframes spin   { to{transform:rotate(360deg)} }
+        @keyframes fadeIn { from{opacity:0} to{opacity:1} }
+        @keyframes slideUp{ from{opacity:0;transform:translateY(12px)} to{opacity:1;transform:translateY(0)} }
+        @keyframes slideIn{ from{transform:translateX(100%)} to{transform:translateX(0)} }
+
+        /* ── NAV ── */
+        .cx-nav-link {
+          font-family: 'Inter', sans-serif; font-size: 13px; font-weight: 500;
+          color: #888; padding: 6px 11px; border-radius: 7px;
+          cursor: pointer; border: none; background: none;
+          transition: color 0.15s, background 0.15s; white-space: nowrap;
+        }
+        .cx-nav-link:hover  { color: #111; background: #F0F0EE; }
+        .cx-nav-link.active { color: #111; background: #EBEBEA; font-weight: 600; }
+
+        /* ── HOVER EFFECTS ── */
+        .cx-quick-card {
+          background: #fff; border: 1px solid #EAEAE8; border-radius: 14px;
+          padding: 18px 20px; cursor: pointer; flex: 1; min-width: 0;
+          transition: border-color 0.15s, transform 0.15s;
+        }
+        .cx-quick-card:hover { border-color: #111; transform: translateY(-2px); }
+
+        .cx-match-type {
+          cursor: pointer; padding: 15px; border-radius: 11px;
+          border: 1px solid #E8E8E8; background: #fff; transition: border-color 0.15s;
+        }
+        .cx-match-type:hover  { border-color: #888; }
+        .cx-match-type.sel    { border: 2px solid #111; background: #FAFAFA; }
+
+        .cx-lang-chip {
+          cursor: pointer; padding: 6px 12px; border-radius: 7px;
+          font-family: 'JetBrains Mono', monospace; font-size: 12px;
+          border: 1px solid #E0E0DC; background: #FAFAFA; color: #666;
+          transition: border-color 0.15s, color 0.15s, background 0.15s;
+        }
+        .cx-lang-chip:hover  { border-color: #111; color: #111; }
+        .cx-lang-chip.sel    { background: #111; color: #fff; border-color: #111; }
+
+        .cx-btn {
+          font-family: 'Inter', sans-serif; font-weight: 600; cursor: pointer;
+          border: none; display: inline-flex; align-items: center; gap: 7px;
+          transition: opacity 0.15s, transform 0.15s; border-radius: 9px;
+        }
+        .cx-btn:hover:not(:disabled)  { opacity: 0.85; transform: translateY(-1px); }
+        .cx-btn:active:not(:disabled) { transform: translateY(0); }
+        .cx-btn:disabled { opacity: 0.3; cursor: not-allowed; }
+        .cx-btn-solid   { background: #111; color: #fff; padding: 10px 20px; font-size: 14px; border: none; }
+        .cx-btn-outline { background: #fff; color: #111; padding: 10px 20px; font-size: 14px; border: 1px solid #DDDDD8; }
+        .cx-btn-outline:hover:not(:disabled) { border-color: #111; opacity: 1; }
+        .cx-btn-ghost   { background: transparent; color: #777; padding: 9px 14px; font-size: 13px; border: 1px solid #E8E8E6; }
+        .cx-btn-ghost:hover:not(:disabled) { color: #111; border-color: #AAA; opacity: 1; }
+        .cx-btn-danger  { background: transparent; color: #a32d2d; padding: 10px 14px; font-size: 13px; border: 1px solid #FCC; }
+        .cx-btn-danger:hover:not(:disabled) { background: #FFF5F5; opacity: 1; }
+
+        .cx-recent-row {
+          display: flex; align-items: center; gap: 12px;
+          padding: 11px 0; border-bottom: 1px solid #F2F2F0;
+        }
+        .cx-recent-row:last-child { border-bottom: none; }
+
+        .cx-quick-link {
+          display: flex; align-items: center; gap: 10px;
+          padding: 9px 10px; border-radius: 9px; cursor: pointer;
+          transition: background 0.12s;
+        }
+        .cx-quick-link:hover { background: #F5F5F3; }
+
+        /* ── OVERLAY / MODAL / DRAWER ── */
+        .cx-overlay {
+          position: fixed; inset: 0; background: rgba(0,0,0,0.35);
+          z-index: 300; display: flex; align-items: center; justify-content: center;
+          animation: fadeIn 0.18s ease;
+        }
+        .cx-modal {
+          background: #fff; border-radius: 18px; padding: 32px;
+          width: 100%; max-width: 620px; max-height: 90vh; overflow-y: auto;
+          position: relative; animation: slideUp 0.2s ease;
+        }
+        .cx-drawer {
+          position: fixed; right: 0; top: 0; bottom: 0; width: 296px;
+          background: #fff; border-left: 1px solid #EAEAE8; z-index: 300;
+          padding: 26px 22px; display: flex; flex-direction: column; gap: 20px;
+          animation: slideIn 0.2s ease;
+        }
+
+        input[type="text"]:focus { outline: none; }
       `}</style>
 
-      <div style={s.page}>
+      <div style={{ minHeight: "100vh", background: "#F5F5F3" }}>
 
-        {/* ══ NAVBAR ══ */}
-        <nav style={s.navbar}>
-          <div style={s.navLeft}>
-            <div style={s.brandMark}>CX</div>
-            <span style={s.brandName}>Codex</span>
-            <div style={s.navDivider} />
-            {NAV_ITEMS.map((item) => (
-              <span
-                key={item}
-                className={`nav-item${activeNav === item ? " active" : ""}`}
-                onClick={() => {
-
-                  setActiveNav(item);
-
-                  switch (item) {
-
-                    case "Dashboard":
-                      navigate("/dashboard");
-                      break;
-
-                    case "Problem":
-                      navigate("/problem");
-                      break;
-
-                    case "Matches":
-                      navigate("/matches");
-                      break;
-
-                    case "Leaderboard":
-                      navigate("/leaderboard");
-                      break;
-
-                    case "Rooms":
-                      navigate("/rooms");
-                      break;
-
-                    default:
-                      break;
-                  }
-
-                }}
-              >
-                {item}
+        {/* ══════════ NAVBAR ══════════ */}
+        <nav style={{
+          height: 56, background: "#fff", borderBottom: "1px solid #EAEAE8",
+          display: "flex", alignItems: "center", justifyContent: "space-between",
+          padding: "0 28px", position: "sticky", top: 0, zIndex: 100,
+        }}>
+          {/* Left */}
+          <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+            <div
+              style={{ display: "flex", alignItems: "center", gap: 8, marginRight: 12, cursor: "pointer" }}
+              onClick={() => navigate("/dashboard")}
+            >
+              <div style={{
+                width: 28, height: 28, border: "1.5px solid #111", borderRadius: 7,
+                display: "flex", alignItems: "center", justifyContent: "center",
+                fontFamily: "'JetBrains Mono', monospace", fontSize: 11, fontWeight: 700, color: "#111",
+                flexShrink: 0,
+              }}>CX</div>
+              <span style={{ fontFamily: "'Inter', sans-serif", fontWeight: 800, fontSize: 15, color: "#111", letterSpacing: "-0.03em" }}>
+                Codex
               </span>
+            </div>
+
+            <div style={{ width: 1, height: 18, background: "#E8E8E6", margin: "0 10px" }} />
+
+            {NAV_ROUTES.map(({ label, path }) => (
+              <button
+                key={label}
+                className={`cx-nav-link${location.pathname.startsWith(path) ? " active" : ""}`}
+                onClick={() => navigate(path)}
+              >
+                {label}
+              </button>
             ))}
           </div>
 
-          <div style={s.navRight}>
-            <div style={s.liveDot}>
-              <div style={s.livePulse} />
-              <span style={s.liveText}>847 live</span>
+          {/* Right */}
+          <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+            {/* Live */}
+            <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+              <div style={{ width: 7, height: 7, borderRadius: "50%", background: "#111", animation: "pulse 2s infinite" }} />
+              <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 11, color: "#888" }}>847 live</span>
             </div>
-            <div style={s.userPill} onClick={() => setShowProfile(!showProfile)}>
-              <div style={s.userAvatar}>
+
+            {/* New match shortcut */}
+            <button className="cx-btn cx-btn-solid" style={{ fontSize: 13, padding: "7px 16px" }} onClick={() => openModal("ranked")}>
+              + New Match
+            </button>
+
+            {/* User pill */}
+            <div
+              onClick={() => setShowProfile(v => !v)}
+              style={{
+                display: "flex", alignItems: "center", gap: 8,
+                padding: "5px 10px 5px 6px",
+                border: "1px solid #E8E8E6", borderRadius: 9, cursor: "pointer",
+                background: "#FAFAFA",
+              }}
+            >
+              <div style={{
+                width: 26, height: 26, borderRadius: "50%",
+                background: "#111", color: "#fff",
+                display: "flex", alignItems: "center", justifyContent: "center",
+                fontFamily: "'Inter', sans-serif", fontSize: 12, fontWeight: 800,
+                flexShrink: 0,
+              }}>
                 {username?.[0]?.toUpperCase() || "?"}
               </div>
-              <span style={s.userPillName}>{username || user?.email}</span>
-              <span style={{ color: "#aaa", fontSize: 12 }}>▾</span>
+              <span style={{ fontFamily: "'Inter', sans-serif", fontSize: 13, fontWeight: 600, color: "#111" }}>
+                {username || user?.email?.split("@")[0] || "User"}
+              </span>
+              <span style={{ color: "#AAA", fontSize: 11 }}>▾</span>
             </div>
           </div>
         </nav>
 
-        {/* ══ MAIN ══ */}
-        <div style={s.main}>
+        {/* ══════════ MAIN ══════════ */}
+        <div style={{ maxWidth: 1360, margin: "0 auto", padding: "32px 32px" }}>
 
-          {/* ── Header row ── */}
-          <div style={s.pageHeader}>
+          {/* Page header */}
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", marginBottom: 28 }}>
             <div>
-              <p style={s.pageLabel}>// DASHBOARD</p>
-              <h1 style={s.pageTitle}>
-                Welcome back,{" "}
-                <span style={{ color: "#0a0a0a" }}>{username || "Competitor"}</span>
+              <p style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 11, color: "#AAA", letterSpacing: "0.08em", marginBottom: 5 }}>
+                // DASHBOARD
+              </p>
+              <h1 style={{ fontFamily: "'Inter', sans-serif", fontSize: 28, fontWeight: 800, color: "#999", letterSpacing: "-0.03em", lineHeight: 1.1 }}>
+                Welcome back, <span style={{ color: "#111" }}>{username || "Competitor"}</span>
               </h1>
             </div>
             <div style={{ display: "flex", gap: 10 }}>
-              <button
-                className="action-btn"
-                style={s.btnOutline}
-                onClick={() => navigate("/room/watch")}
-              >
+              <button className="cx-btn cx-btn-outline" onClick={() => navigate("/rooms/watch")}>
                 Watch Live →
               </button>
-              <button
-                className="action-btn"
-                style={s.btnPrimary}
-                onClick={() => setShowMatchModal(true)}
-              >
+              <button className="cx-btn cx-btn-solid" onClick={() => openModal("ranked")}>
                 + New Match
               </button>
             </div>
           </div>
 
-          {/* ── Stats row ── */}
-          <div style={s.statsGrid}>
-            <StatCard
-              label="ELO Rating"
-              value={stats?.rating ?? "—"}
-              sub={rank.label}
-              mono
-            />
-            <StatCard
-              label="Win Rate"
-              value={`${winRate}%`}
-              sub={`${stats?.wins ?? 0}W / ${stats?.losses ?? 0}L`}
-              mono
-            />
-            <StatCard
-              label="Win Streak"
-              value={stats?.streak ?? "—"}
-              sub="current streak"
-              mono
-            />
-            <StatCard
-              label="Global Rank"
-              value={`#${stats?.rank ?? 999}`}
-              sub="worldwide"
-              mono
-            />
+          {/* ── Stat cards ── */}
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 12, marginBottom: 18 }}>
+            {[
+              { label: "ELO Rating",  value: stats?.rating ?? "—",           sub: getRankLabel(stats?.rating) },
+              { label: "Win Rate",    value: `${winRate}%`,                  sub: `${stats?.wins ?? 0}W / ${stats?.losses ?? 0}L` },
+              { label: "Win Streak",  value: stats?.streak ?? "—",           sub: "current streak" },
+              { label: "Global Rank", value: `#${stats?.rank ?? 999}`,       sub: "worldwide" },
+            ].map(({ label, value, sub }) => (
+              <div key={label} style={{ background: "#fff", border: "1px solid #EAEAE8", borderRadius: 14, padding: "20px 24px" }}>
+                <p style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 10, color: "#AAA", textTransform: "uppercase", letterSpacing: "0.1em", marginBottom: 10 }}>
+                  {label}
+                </p>
+                <p style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 32, fontWeight: 700, color: "#111", lineHeight: 1, marginBottom: 5 }}>
+                  {value}
+                </p>
+                <p style={{ fontFamily: "'Inter', sans-serif", fontSize: 12, color: "#999" }}>{sub}</p>
+              </div>
+            ))}
           </div>
 
-          {/* ── Quick actions ── */}
-          <div style={s.quickActions}>
-            <QuickAction icon="⚡" label="Blitz Match" sub="5 min" onClick={() => { setSelectedType("blitz"); setShowMatchModal(true); }} />
-            <QuickAction icon="🏆" label="Ranked" sub="ELO match" onClick={() => { setSelectedType("ranked"); setShowMatchModal(true); }} />
-            <QuickAction icon="👥" label="Team 2v2" sub="collaborative" onClick={() => { setSelectedType("team"); setShowMatchModal(true); }} />
-            <QuickAction icon="📚" label="Practice" sub="unranked" onClick={() => { setSelectedType("practice"); setShowMatchModal(true); }} />
-            <QuickAction icon="🔗" label="Join Room" sub="enter code" onClick={() => { setSelectedType("custom"); setShowMatchModal(true); }} />
-            <QuickAction icon="👁" label="Watch Live" sub="spectate" onClick={() => navigate("/room/watch")} />
+          {/* ── Quick action cards ── */}
+          <div style={{ display: "flex", gap: 10, marginBottom: 22 }}>
+            {[
+              { label: "Blitz Match",  sub: "5 min",          type: "blitz",    svgPath: "M13 2L3 14h9l-1 8 10-12h-9l1-8z" },
+              { label: "Ranked",       sub: "ELO match",      type: "ranked",   svgPath: "M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" },
+              { label: "Team 2v2",     sub: "collaborative",  type: "team",     svgPath: "M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75" },
+              { label: "Practice",     sub: "unranked",       type: "practice", svgPath: "M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2zM22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z" },
+              { label: "Join Room",    sub: "enter code",     type: "custom",   svgPath: "M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4M10 17l5-5-5-5M15 12H3" },
+              { label: "Watch Live",   sub: "spectate",       type: null,       svgPath: "M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8zM12 12m-3 0a3 3 0 1 0 6 0 3 3 0 1 0-6 0" },
+            ].map(({ label, sub, type, svgPath }) => (
+              <div
+                key={label}
+                className="cx-quick-card"
+                onClick={() => type ? openModal(type) : navigate("/rooms/watch")}
+              >
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#111" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" style={{ marginBottom: 10, display: "block" }}>
+                  <path d={svgPath} />
+                </svg>
+                <p style={{ fontFamily: "'Inter', sans-serif", fontSize: 13, fontWeight: 700, color: "#111", marginBottom: 3 }}>{label}</p>
+                <p style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 11, color: "#AAA" }}>{sub}</p>
+              </div>
+            ))}
           </div>
 
           {/* ── Content grid ── */}
-          <div style={s.contentGrid}>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 380px", gap: 18, alignItems: "start" }}>
 
             {/* Recent matches */}
-            <div style={s.card}>
-              <div style={s.cardHeader}>
-                <p style={s.cardLabel}>RECENT MATCHES</p>
-                <span style={s.cardLink}>View all →</span>
+            <div style={{ background: "#fff", border: "1px solid #EAEAE8", borderRadius: 14, padding: "22px 26px" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 18 }}>
+                <p style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 10, color: "#AAA", letterSpacing: "0.1em", textTransform: "uppercase" }}>Recent Matches</p>
+                <span
+                  style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 11, color: "#888", cursor: "pointer" }}
+                  onClick={() => navigate("/matches")}
+                >
+                  View all →
+                </span>
               </div>
 
               {recent.length === 0 ? (
-                <div style={s.emptyState}>
-                  <p style={s.emptyIcon}>⚔️</p>
-                  <p style={s.emptyText}>No matches yet. Jump in!</p>
-                  <button
-                    className="action-btn"
-                    style={{ ...s.btnPrimary, marginTop: 12, fontSize: 13, padding: "9px 18px" }}
-                    onClick={() => setShowMatchModal(true)}
-                  >
+                <div style={{ display: "flex", flexDirection: "column", alignItems: "center", padding: "40px 0", textAlign: "center" }}>
+                  <svg width="38" height="38" viewBox="0 0 24 24" fill="none" stroke="#DDD" strokeWidth="1.5" style={{ marginBottom: 14 }}>
+                    <path d="M14.5 10c-.83 0-1.5-.67-1.5-1.5v-5c0-.83.67-1.5 1.5-1.5s1.5.67 1.5 1.5v5c0 .83-.67 1.5-1.5 1.5zM20.5 10H19V8.5c0-.83.67-1.5 1.5-1.5s1.5.67 1.5 1.5-.67 1.5-1.5 1.5zM9.5 14c.83 0 1.5.67 1.5 1.5v5c0 .83-.67 1.5-1.5 1.5S8 21.33 8 20.5v-5c0-.83.67-1.5 1.5-1.5zM3.5 14H5v1.5c0 .83-.67 1.5-1.5 1.5S2 16.33 2 15.5 2.67 14 3.5 14zM14 14.5c0-.83.67-1.5 1.5-1.5h5c.83 0 1.5.67 1.5 1.5s-.67 1.5-1.5 1.5h-5c-.83 0-1.5-.67-1.5-1.5zM15.5 19H14v1.5c0 .83.67 1.5 1.5 1.5s1.5-.67 1.5-1.5-.67-1.5-1.5-1.5zM10 9.5C10 8.67 9.33 8 8.5 8h-5C2.67 8 2 8.67 2 9.5S2.67 11 3.5 11h5c.83 0 1.5-.67 1.5-1.5zM8.5 5H10V3.5C10 2.67 9.33 2 8.5 2S7 2.67 7 3.5 7.67 5 8.5 5z"/>
+                  </svg>
+                  <p style={{ fontFamily: "'Inter', sans-serif", fontSize: 14, color: "#AAA", marginBottom: 16 }}>No matches yet. Jump in!</p>
+                  <button className="cx-btn cx-btn-solid" style={{ fontSize: 13, padding: "9px 20px" }} onClick={() => openModal("ranked")}>
                     Start your first match
                   </button>
                 </div>
               ) : (
                 recent.map((m, i) => (
-                  <div className="recent-row" key={m.id || i}>
-                    <span style={m.winner === user?.uid ? s.winBadge : s.lossBadge}>
+                  <div className="cx-recent-row" key={m.id || i}>
+                    <span style={{
+                      fontFamily: "'JetBrains Mono', monospace", fontSize: 10, fontWeight: 700,
+                      padding: "3px 8px", borderRadius: 5, flexShrink: 0,
+                      background: m.winner === user?.uid ? "#F0FAF5" : "#FFF0F0",
+                      color:      m.winner === user?.uid ? "#0F6E56" : "#A32D2D",
+                    }}>
                       {m.winner === user?.uid ? "WIN" : "LOSS"}
                     </span>
-                    <span style={{ flex: 1, color: "#333", fontSize: 12, fontFamily: "'Syne',sans-serif" }}>
+                    <span style={{ flex: 1, fontFamily: "'Inter', sans-serif", fontSize: 13, color: "#333", fontWeight: 500, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                       {m.problem || "Unknown problem"}
                     </span>
-                    <span style={{ color: "#888", fontSize: 11 }}>{m.type || "ranked"}</span>
-                    <span style={{ color: "#888", fontSize: 11 }}>{m.language || "—"}</span>
+                    <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 11, color: "#BBB", whiteSpace: "nowrap" }}>
+                      {m.type || "ranked"}
+                    </span>
+                    <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 11, color: "#BBB", whiteSpace: "nowrap" }}>
+                      {m.language || "—"}
+                    </span>
                     <span style={{
-                      fontWeight: 700,
-                      color: (m.ratingChange?.[user?.uid] ?? 0) > 0 ? "#1d9e75" : "#c00",
-                      minWidth: 40, textAlign: "right"
+                      fontFamily: "'JetBrains Mono', monospace", fontWeight: 700, fontSize: 12,
+                      color: (m.ratingChange?.[user?.uid] ?? 0) >= 0 ? "#0F6E56" : "#A32D2D",
+                      minWidth: 38, textAlign: "right",
                     }}>
                       {(m.ratingChange?.[user?.uid] ?? 0) > 0 ? "+" : ""}
                       {m.ratingChange?.[user?.uid] ?? 0}
@@ -393,115 +443,173 @@ export default function Dashboard() {
             {/* Right column */}
             <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
 
-              {/* Rating history placeholder */}
-              <div style={s.card}>
-                <div style={s.cardHeader}>
-                  <p style={s.cardLabel}>RATING HISTORY</p>
+              {/* Rating history */}
+              <div style={{ background: "#fff", border: "1px solid #EAEAE8", borderRadius: 14, padding: "22px 24px" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
+                  <p style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 10, color: "#AAA", letterSpacing: "0.1em", textTransform: "uppercase" }}>Rating History</p>
+                  <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 11, color: "#888", cursor: "pointer" }} onClick={() => navigate("/matches")}>
+                    Full history →
+                  </span>
                 </div>
                 <RatingChart rating={stats?.rating ?? 1200} wins={stats?.wins ?? 0} losses={stats?.losses ?? 0} />
               </div>
 
-              {/* Top languages */}
-              <div style={s.card}>
-                <div style={s.cardHeader}>
-                  <p style={s.cardLabel}>PREFERRED LANGUAGES</p>
-                </div>
-                <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 4 }}>
-                  {["Python", "C++", "JavaScript"].map((l) => (
-                    <span key={l} style={s.langTag}>{l}</span>
+              {/* Preferred languages */}
+              <div style={{ background: "#fff", border: "1px solid #EAEAE8", borderRadius: 14, padding: "20px 24px" }}>
+                <p style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 10, color: "#AAA", letterSpacing: "0.1em", textTransform: "uppercase", marginBottom: 12 }}>
+                  Preferred Languages
+                </p>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 7 }}>
+                  {["Python", "C++", "JavaScript"].map(l => (
+                    <span key={l} style={{
+                      fontFamily: "'JetBrains Mono', monospace", fontSize: 11,
+                      background: "#F5F5F3", color: "#555",
+                      padding: "5px 11px", borderRadius: 7, border: "1px solid #E8E8E6",
+                    }}>{l}</span>
                   ))}
                   <span
-                    style={{ ...s.langTag, background: "transparent", color: "#aaa", cursor: "pointer" }}
-                    onClick={() => setShowMatchModal(true)}
+                    style={{
+                      fontFamily: "'JetBrains Mono', monospace", fontSize: 11,
+                      background: "transparent", color: "#AAA",
+                      padding: "5px 11px", borderRadius: 7, border: "1px dashed #DDD",
+                      cursor: "pointer",
+                    }}
+                    onClick={() => openModal("ranked")}
                   >
                     + add more
                   </span>
                 </div>
               </div>
 
+              {/* Quick links */}
+              <div style={{ background: "#fff", border: "1px solid #EAEAE8", borderRadius: 14, padding: "20px 24px" }}>
+                <p style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 10, color: "#AAA", letterSpacing: "0.1em", textTransform: "uppercase", marginBottom: 12 }}>
+                  Quick Links
+                </p>
+                {[
+                  { label: "Browse Problems",      onClick: () => navigate("/problems"),                    icon: "M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2M9 5a2 2 0 0 0 2 2h2a2 2 0 0 0 2-2M9 5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2" },
+                  { label: "Leaderboard",          onClick: () => navigate("/leaderboard"),                 icon: "M18 20V10M12 20V4M6 20v-6" },
+                  { label: "My Match History",     onClick: () => navigate("/matches"),                     icon: "M12 8v4l3 3m6-3a9 9 0 1 1-18 0 9 9 0 0 1 18 0z" },
+                  { label: "Create a Room",        onClick: () => navigate(`/room/${generateRoomCode()}`),  icon: "M12 5v14M5 12h14" },
+                  { label: "Watch Live Matches",   onClick: () => navigate("/rooms/watch"),                 icon: "M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8zM12 12m-3 0a3 3 0 1 0 6 0 3 3 0 1 0-6 0" },
+                ].map(({ label, onClick, icon }) => (
+                  <div key={label} className="cx-quick-link" onClick={onClick}>
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#888" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <path d={icon} />
+                    </svg>
+                    <span style={{ fontFamily: "'Inter', sans-serif", fontSize: 13, fontWeight: 500, color: "#444", flex: 1 }}>
+                      {label}
+                    </span>
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#CCC" strokeWidth="2">
+                      <polyline points="9 18 15 12 9 6" />
+                    </svg>
+                  </div>
+                ))}
+              </div>
+
             </div>
           </div>
         </div>
 
-        {/* ══ MATCH MODAL ══ */}
-        {showMatchModal && (
-          <div className="overlay" onClick={(e) => { if (e.target === e.currentTarget && matchStep === "select") { setShowMatchModal(false); setMatchStep("select"); } }}>
-            <div className="modal">
+        {/* ══════════ MATCH MODAL ══════════ */}
+        {showModal && (
+          <div
+            className="cx-overlay"
+            onClick={(e) => { if (e.target === e.currentTarget && matchStep === "select") { setShowModal(false); } }}
+          >
+            <div className="cx-modal">
+
+              {/* ── SELECT ── */}
               {matchStep === "select" && (
                 <>
-                  <div style={s.modalHeader}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 26 }}>
                     <div>
-                      <p style={s.cardLabel}>NEW MATCH</p>
-                      <h2 style={s.modalTitle}>Configure your match</h2>
+                      <p style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 10, color: "#AAA", letterSpacing: "0.1em", textTransform: "uppercase", marginBottom: 5 }}>New Match</p>
+                      <h2 style={{ fontFamily: "'Inter', sans-serif", fontSize: 22, fontWeight: 800, color: "#111", letterSpacing: "-0.03em" }}>Configure your match</h2>
                     </div>
-                    <button style={s.closeBtn} onClick={() => setShowMatchModal(false)}>✕</button>
+                    <button style={{ background: "none", border: "none", fontSize: 20, color: "#AAA", cursor: "pointer", lineHeight: 1, padding: "2px 4px" }} onClick={() => setShowModal(false)}>✕</button>
                   </div>
 
-                  {/* Match type */}
-                  <p style={{ ...s.cardLabel, marginBottom: 10 }}>MATCH TYPE</p>
-                  <div style={s.matchTypeGrid}>
-                    {MATCH_TYPES.map((mt) => (
+                  {/* Match type grid */}
+                  <p style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 10, color: "#AAA", letterSpacing: "0.1em", textTransform: "uppercase", marginBottom: 10 }}>Match Type</p>
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 9, marginBottom: 20 }}>
+                    {MATCH_TYPES.map(mt => (
                       <div
                         key={mt.id}
-                        className={`match-type-card${selectedType === mt.id ? " selected" : ""}`}
+                        className={`cx-match-type${selectedType === mt.id ? " sel" : ""}`}
                         onClick={() => setSelectedType(mt.id)}
                       >
-                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 6 }}>
-                          <span style={{ fontSize: 20 }}>{mt.icon}</span>
-                          <span style={s.matchTag}>{mt.tag}</span>
+                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+                          <span style={{ fontFamily: "'Inter', sans-serif", fontSize: 14, fontWeight: 700, color: "#111" }}>{mt.label}</span>
+                          <span style={{
+                            fontFamily: "'JetBrains Mono', monospace", fontSize: 9,
+                            background: selectedType === mt.id ? "#111" : "#F0F0EE",
+                            color:      selectedType === mt.id ? "#fff" : "#888",
+                            padding: "2px 7px", borderRadius: 5, letterSpacing: "0.05em",
+                          }}>{mt.tag}</span>
                         </div>
-                        <p style={{ fontFamily: "'Syne',sans-serif", fontWeight: 700, fontSize: 14, color: "#0a0a0a", marginBottom: 2 }}>{mt.label}</p>
-                        <p style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 11, color: "#888" }}>{mt.desc}</p>
+                        <p style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 11, color: "#AAA" }}>{mt.desc}</p>
                       </div>
                     ))}
                   </div>
 
-                  {/* Join room code (only for custom) */}
+                  {/* Room code (custom only) */}
                   {selectedType === "custom" && (
-                    <div style={{ marginTop: 20 }}>
-                      <p style={{ ...s.cardLabel, marginBottom: 8 }}>ROOM CODE</p>
+                    <div style={{ marginBottom: 20 }}>
+                      <p style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 10, color: "#AAA", letterSpacing: "0.1em", textTransform: "uppercase", marginBottom: 10 }}>Room Code</p>
                       <div style={{ display: "flex", gap: 8 }}>
                         <input
                           type="text"
-                          placeholder="Enter room code..."
+                          placeholder="Enter 6-char code..."
                           value={roomCode}
-                          onChange={(e) => setRoomCode(e.target.value.toUpperCase())}
-                          style={s.roomInput}
+                          maxLength={6}
+                          onChange={e => setRoomCode(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, ""))}
+                          style={{
+                            flex: 1, padding: "11px 14px", background: "#F5F5F3",
+                            border: "1px solid #E0E0DC", borderRadius: 9,
+                            fontFamily: "'JetBrains Mono', monospace", fontSize: 18,
+                            fontWeight: 700, color: "#111", letterSpacing: "0.18em",
+                          }}
+                          onFocus={e => e.target.style.borderColor = "#111"}
+                          onBlur={e => e.target.style.borderColor = "#E0E0DC"}
                         />
-                        <button className="action-btn" style={s.btnPrimary} onClick={handleJoinRoom}>
+                        <button className="cx-btn cx-btn-solid" style={{ fontSize: 13 }} onClick={handleJoinRoom} disabled={roomCode.length !== 6}>
                           Join →
                         </button>
                       </div>
+                      <p style={{ fontFamily: "'Inter', sans-serif", fontSize: 12, color: "#AAA", marginTop: 8 }}>
+                        Or{" "}
+                        <span
+                          style={{ color: "#111", cursor: "pointer", textDecoration: "underline" }}
+                          onClick={() => navigate(`/room/${generateRoomCode()}`)}
+                        >
+                          create a new room
+                        </span>
+                      </p>
                     </div>
                   )}
 
-                  {/* Language selector */}
-                  <div style={{ marginTop: 20 }}>
-                    <p style={{ ...s.cardLabel, marginBottom: 10 }}>LANGUAGE</p>
-                    <div style={s.langGrid}>
-                      {LANGUAGES.map((l) => (
-                        <span
-                          key={l}
-                          className={`lang-chip${selectedLang === l ? " selected" : ""}`}
-                          onClick={() => setSelectedLang(l)}
-                        >
-                          {l}
-                        </span>
-                      ))}
-                    </div>
+                  {/* Language */}
+                  <p style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 10, color: "#AAA", letterSpacing: "0.1em", textTransform: "uppercase", marginBottom: 10 }}>Language</p>
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 7, marginBottom: 24 }}>
+                    {LANGUAGES.map(l => (
+                      <span
+                        key={l}
+                        className={`cx-lang-chip${selectedLang === l ? " sel" : ""}`}
+                        onClick={() => setSelectedLang(l)}
+                      >
+                        {l}
+                      </span>
+                    ))}
                   </div>
 
-                  {/* Summary + start */}
-                  <div style={s.modalFooter}>
-                    <div style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 12, color: "#888" }}>
+                  {/* Footer */}
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", paddingTop: 20, borderTop: "1px solid #F0F0EE" }}>
+                    <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 12, color: "#888" }}>
                       {MATCH_TYPES.find(m => m.id === selectedType)?.label} · {selectedLang}
-                    </div>
+                    </span>
                     {selectedType !== "custom" && (
-                      <button
-                        className="action-btn"
-                        style={s.btnPrimary}
-                        onClick={handleStartMatch}
-                      >
+                      <button className="cx-btn cx-btn-solid" onClick={handleFindMatch}>
                         Find Match →
                       </button>
                     )}
@@ -509,78 +617,136 @@ export default function Dashboard() {
                 </>
               )}
 
+              {/* ── SEARCHING ── */}
               {matchStep === "searching" && (
-                <div style={s.searchingState}>
-                  <div style={s.searchRing} />
-                  <p style={s.searchTitle}>Finding opponent...</p>
-                  <p style={s.searchSub}>{MATCH_TYPES.find(m => m.id === selectedType)?.label} · {selectedLang}</p>
-                  <button
-                    style={{ ...s.btnOutline, marginTop: 24, fontSize: 13 }}
-                    onClick={() => { setMatchStep("select"); setMatchLoading(false); }}
-                  >
+                <div style={{ display: "flex", flexDirection: "column", alignItems: "center", padding: "48px 0", textAlign: "center" }}>
+                  <div style={{
+                    width: 54, height: 54, borderRadius: "50%",
+                    border: "3px solid #E0E0DC", borderTopColor: "#111",
+                    animation: "spin 0.8s linear infinite", marginBottom: 24,
+                  }} />
+                  <p style={{ fontFamily: "'Inter', sans-serif", fontSize: 20, fontWeight: 800, color: "#111", marginBottom: 6 }}>
+                    Finding opponent...
+                  </p>
+                  <p style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 12, color: "#AAA" }}>
+                    {MATCH_TYPES.find(m => m.id === selectedType)?.label} · {selectedLang}
+                  </p>
+                  <button className="cx-btn cx-btn-ghost" style={{ marginTop: 24 }} onClick={() => setMatchStep("select")}>
                     Cancel
                   </button>
                 </div>
               )}
 
+              {/* ── FOUND ── */}
               {matchStep === "found" && (
-                <div style={s.searchingState}>
-                  <div style={{ fontSize: 48, marginBottom: 16 }}>✓</div>
-                  <p style={s.searchTitle}>Opponent found!</p>
-                  <p style={s.searchSub}>Entering room...</p>
+                <div style={{ display: "flex", flexDirection: "column", alignItems: "center", padding: "48px 0", textAlign: "center" }}>
+                  <div style={{
+                    width: 58, height: 58, borderRadius: "50%",
+                    background: "#111", color: "#fff",
+                    display: "flex", alignItems: "center", justifyContent: "center",
+                    fontSize: 26, marginBottom: 20,
+                  }}>✓</div>
+                  <p style={{ fontFamily: "'Inter', sans-serif", fontSize: 20, fontWeight: 800, color: "#111", marginBottom: 6 }}>
+                    Opponent found!
+                  </p>
+                  <p style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 12, color: "#AAA" }}>
+                    Entering room...
+                  </p>
                 </div>
               )}
+
             </div>
           </div>
         )}
 
-        {/* ══ PROFILE DRAWER ══ */}
+        {/* ══════════ PROFILE DRAWER ══════════ */}
         {showProfile && (
           <>
-            <div style={{ position: "fixed", inset: 0, zIndex: 199 }} onClick={() => setShowProfile(false)} />
-            <div className="profile-drawer">
+            <div style={{ position: "fixed", inset: 0, zIndex: 299 }} onClick={() => setShowProfile(false)} />
+            <div className="cx-drawer">
+
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                <p style={s.cardLabel}>PROFILE</p>
-                <button style={s.closeBtn} onClick={() => setShowProfile(false)}>✕</button>
+                <p style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 10, color: "#AAA", letterSpacing: "0.1em", textTransform: "uppercase" }}>Profile</p>
+                <button style={{ background: "none", border: "none", fontSize: 18, color: "#AAA", cursor: "pointer" }} onClick={() => setShowProfile(false)}>✕</button>
               </div>
 
+              {/* Avatar + name */}
               <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
-                <div style={s.profileAvatar}>{username?.[0]?.toUpperCase() || "?"}</div>
+                <div style={{
+                  width: 50, height: 50, borderRadius: "50%",
+                  background: "#111", color: "#fff", flexShrink: 0,
+                  display: "flex", alignItems: "center", justifyContent: "center",
+                  fontFamily: "'Inter', sans-serif", fontSize: 20, fontWeight: 800,
+                }}>
+                  {username?.[0]?.toUpperCase() || "?"}
+                </div>
                 <div>
-                  <p style={{ fontFamily: "'Syne',sans-serif", fontWeight: 800, fontSize: 18, color: "#0a0a0a" }}>{username}</p>
-                  <p style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 11, color: "#888" }}>{user?.email}</p>
+                  <p style={{ fontFamily: "'Inter', sans-serif", fontWeight: 700, fontSize: 16, color: "#111" }}>{username}</p>
+                  <p style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 11, color: "#888", marginTop: 2 }}>{user?.email}</p>
                 </div>
               </div>
 
-              <div style={s.profileStats}>
+              {/* Mini stat grid */}
+              <div style={{
+                display: "grid", gridTemplateColumns: "1fr 1fr",
+                gap: 1, background: "#EAEAE8", border: "1px solid #EAEAE8",
+                borderRadius: 11, overflow: "hidden",
+              }}>
                 {[
                   { label: "Rating", value: stats?.rating ?? "—" },
-                  { label: "Wins", value: stats?.wins ?? 0 },
-                  { label: "Losses", value: stats?.losses ?? 0 },
-                  { label: "Streak", value: stats?.streak ?? 0 },
+                  { label: "Wins",   value: stats?.wins   ?? 0   },
+                  { label: "Losses", value: stats?.losses ?? 0   },
+                  { label: "Streak", value: stats?.streak ?? 0   },
                 ].map(({ label, value }) => (
-                  <div key={label} style={s.profileStat}>
-                    <span style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 18, fontWeight: 700, color: "#0a0a0a" }}>{value}</span>
-                    <span style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 10, color: "#aaa", textTransform: "uppercase", letterSpacing: 0.5 }}>{label}</span>
+                  <div key={label} style={{ background: "#fff", padding: "14px 16px", display: "flex", flexDirection: "column", gap: 3 }}>
+                    <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 18, fontWeight: 700, color: "#111" }}>{value}</span>
+                    <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 10, color: "#AAA", textTransform: "uppercase", letterSpacing: "0.04em" }}>{label}</span>
                   </div>
                 ))}
               </div>
 
-              <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: "auto" }}>
-                <button className="action-btn" style={{ ...s.btnOutline, width: "100%", padding: 11 }}>
+              {/* Nav shortcuts */}
+              <div style={{ borderTop: "1px solid #F0F0EE", paddingTop: 14 }}>
+                <p style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 10, color: "#AAA", textTransform: "uppercase", letterSpacing: "0.1em", marginBottom: 8 }}>Navigate</p>
+                {NAV_ROUTES.map(({ label, path }) => (
+                  <div
+                    key={label}
+                    onClick={() => { navigate(path); setShowProfile(false); }}
+                    style={{
+                      display: "flex", alignItems: "center", justifyContent: "space-between",
+                      padding: "9px 8px", borderRadius: 8, cursor: "pointer", transition: "background 0.12s",
+                    }}
+                    onMouseEnter={e => e.currentTarget.style.background = "#F5F5F3"}
+                    onMouseLeave={e => e.currentTarget.style.background = "transparent"}
+                  >
+                    <span style={{
+                      fontFamily: "'Inter', sans-serif", fontSize: 13, fontWeight: 500,
+                      color: location.pathname.startsWith(path) ? "#111" : "#666",
+                    }}>{label}</span>
+                    {location.pathname.startsWith(path) && (
+                      <span style={{ width: 6, height: 6, borderRadius: "50%", background: "#111", flexShrink: 0 }} />
+                    )}
+                  </div>
+                ))}
+              </div>
+
+              {/* Actions */}
+              <div style={{ marginTop: "auto", display: "flex", flexDirection: "column", gap: 8 }}>
+                <button className="cx-btn cx-btn-ghost" style={{ width: "100%", justifyContent: "center", padding: 11 }}>
                   Edit Profile
                 </button>
-                <button className="action-btn" style={{ ...s.btnOutline, width: "100%", padding: 11 }}>
+                <button
+                  className="cx-btn cx-btn-ghost"
+                  style={{ width: "100%", justifyContent: "center", padding: 11 }}
+                  onClick={() => { navigate("/settings"); setShowProfile(false); }}
+                >
                   Settings
                 </button>
-                <button
-                  className="action-btn"
-                  style={{ ...s.btnDanger, width: "100%", padding: 11 }}
-                  onClick={logout}
-                >
-                  Logout
+                <button className="cx-btn cx-btn-danger" style={{ width: "100%", justifyContent: "center" }} onClick={logout}>
+                  Log out
                 </button>
               </div>
+
             </div>
           </>
         )}
@@ -591,306 +757,38 @@ export default function Dashboard() {
 }
 
 /* ─────────────────────────────────────────────
-   SUB-COMPONENTS
+   RATING CHART
 ───────────────────────────────────────────── */
 
-function StatCard({ label, value, sub, mono }) {
-  return (
-    <div className="stat-card">
-      <p style={{
-        fontFamily: "'JetBrains Mono',monospace",
-        fontSize: 10, color: "#aaa",
-        textTransform: "uppercase", letterSpacing: 1, marginBottom: 8,
-      }}>{label}</p>
-      <p style={{
-        fontFamily: mono ? "'JetBrains Mono',monospace" : "'Syne',sans-serif",
-        fontSize: 32, fontWeight: 700, color: "#0a0a0a", lineHeight: 1, marginBottom: 4,
-      }}>{value}</p>
-      <p style={{
-        fontFamily: "'JetBrains Mono',monospace",
-        fontSize: 11, color: "#888",
-      }}>{sub}</p>
-    </div>
-  );
-}
-
-function QuickAction({ icon, label, sub, onClick }) {
-  return (
-    <div
-      onClick={onClick}
-      style={{
-        background: "#fff", border: "1px solid #ebebea",
-        borderRadius: 12, padding: "16px 20px",
-        cursor: "pointer", flex: 1, minWidth: 0,
-        transition: "all 0.15s",
-        fontFamily: "'Syne',sans-serif",
-      }}
-      onMouseEnter={(e) => { e.currentTarget.style.borderColor = "#0a0a0a"; e.currentTarget.style.transform = "translateY(-2px)"; }}
-      onMouseLeave={(e) => { e.currentTarget.style.borderColor = "#ebebea"; e.currentTarget.style.transform = "translateY(0)"; }}
-    >
-      <span style={{ fontSize: 22, display: "block", marginBottom: 8 }}>{icon}</span>
-      <p style={{ fontSize: 13, fontWeight: 700, color: "#0a0a0a", marginBottom: 2 }}>{label}</p>
-      <p style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 11, color: "#aaa" }}>{sub}</p>
-    </div>
-  );
-}
-
 function RatingChart({ rating, wins, losses }) {
-  const total = wins + losses || 1;
   const points = Array.from({ length: 8 }, (_, i) => {
     const base = rating - 80 + i * 20 + Math.sin(i * 1.3) * 30;
     return Math.max(800, Math.round(base));
   });
-  const min = Math.min(...points) - 20;
-  const max = Math.max(...points) + 20;
+  const min   = Math.min(...points) - 20;
+  const max   = Math.max(...points) + 20;
   const range = max - min || 1;
-  const w = 260, h = 80;
+  const W = 280, H = 80;
   const pts = points.map((p, i) => [
-    (i / (points.length - 1)) * w,
-    h - ((p - min) / range) * h,
+    (i / (points.length - 1)) * W,
+    H - ((p - min) / range) * H,
   ]);
-  const d = pts.map((p, i) => `${i === 0 ? "M" : "L"}${p[0].toFixed(1)},${p[1].toFixed(1)}`).join(" ");
+  const d = pts.map(([x, y], i) => `${i === 0 ? "M" : "L"}${x.toFixed(1)},${y.toFixed(1)}`).join(" ");
 
   return (
-    <div style={{ marginTop: 8 }}>
-      <svg width="100%" viewBox={`0 0 ${w} ${h}`} style={{ overflow: "visible" }}>
-        <path d={d} fill="none" stroke="#0a0a0a" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+    <div>
+      <svg width="100%" viewBox={`0 0 ${W} ${H}`} style={{ overflow: "visible" }}>
+        <path d={d} fill="none" stroke="#111" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
         {pts.map(([x, y], i) => (
-          <circle key={i} cx={x} cy={y} r="3" fill="#0a0a0a" />
+          <circle key={i} cx={x} cy={y} r={i === pts.length - 1 ? 4 : 2.5} fill="#111" />
         ))}
       </svg>
-      <div style={{ display: "flex", justifyContent: "space-between", marginTop: 8 }}>
-        <span style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 10, color: "#aaa" }}>8 matches ago</span>
-        <span style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 10, color: "#0a0a0a", fontWeight: 700 }}>{rating ?? 1200} ELO</span>
+      <div style={{ display: "flex", justifyContent: "space-between", marginTop: 10 }}>
+        <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 10, color: "#AAA" }}>8 matches ago</span>
+        <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 10, color: "#111", fontWeight: 700 }}>
+          {rating ?? 1200} ELO
+        </span>
       </div>
     </div>
   );
 }
-
-/* ─────────────────────────────────────────────
-   STYLES
-───────────────────────────────────────────── */
-const s = {
-  page: {
-    minHeight: "100vh",
-    background: "#f5f5f3",
-    fontFamily: "'Syne', system-ui, sans-serif",
-  },
-
-  /* NAVBAR */
-  navbar: {
-    display: "flex",
-    justifyContent: "space-between",
-    alignItems: "center",
-    padding: "0 24px",
-    height: 56,
-    background: "#fff",
-    borderBottom: "1px solid #ebebea",
-    position: "sticky",
-    top: 0,
-    zIndex: 50,
-  },
-  navLeft: { display: "flex", alignItems: "center", gap: 4 },
-  brandMark: {
-    width: 28, height: 28,
-    border: "2px solid #0a0a0a",
-    display: "flex", alignItems: "center", justifyContent: "center",
-    fontFamily: "'JetBrains Mono',monospace", fontSize: 11, fontWeight: 700,
-    marginRight: 6,
-  },
-  brandName: {
-    fontFamily: "'Syne',sans-serif", fontWeight: 800, fontSize: 15,
-    color: "#0a0a0a", marginRight: 16, letterSpacing: -0.3,
-  },
-  navDivider: { width: 1, height: 20, background: "#e8e8e8", margin: "0 12px" },
-  navRight: { display: "flex", alignItems: "center", gap: 16 },
-  liveDot: { display: "flex", alignItems: "center", gap: 6 },
-  livePulse: {
-    width: 7, height: 7, borderRadius: "50%",
-    background: "#0a0a0a", animation: "pulse 2s infinite",
-  },
-  liveText: { fontFamily: "'JetBrains Mono',monospace", fontSize: 11, color: "#888" },
-  userPill: {
-    display: "flex", alignItems: "center", gap: 8,
-    padding: "5px 10px 5px 6px",
-    border: "1px solid #e8e8e8", borderRadius: 8,
-    cursor: "pointer", background: "#fafafa",
-  },
-  userAvatar: {
-    width: 26, height: 26, borderRadius: "50%",
-    background: "#0a0a0a", color: "#fff",
-    display: "flex", alignItems: "center", justifyContent: "center",
-    fontFamily: "'Syne',sans-serif", fontSize: 12, fontWeight: 800,
-  },
-  userPillName: { fontFamily: "'Syne',sans-serif", fontSize: 13, fontWeight: 700, color: "#0a0a0a" },
-
-  /* MAIN */
-  main: { maxWidth: 1200, margin: "0 auto", padding: "28px 24px" },
-  pageHeader: {
-    display: "flex", justifyContent: "space-between", alignItems: "flex-end",
-    marginBottom: 24,
-  },
-  pageLabel: {
-    fontFamily: "'JetBrains Mono',monospace", fontSize: 11,
-    color: "#aaa", letterSpacing: 1, marginBottom: 4,
-  },
-  pageTitle: {
-    fontFamily: "'Syne',sans-serif", fontSize: 28, fontWeight: 800,
-    color: "#888", letterSpacing: -0.8, lineHeight: 1,
-  },
-
-  /* STATS */
-  statsGrid: {
-    display: "grid", gridTemplateColumns: "repeat(4,1fr)",
-    gap: 12, marginBottom: 16,
-  },
-
-  /* QUICK ACTIONS */
-  quickActions: {
-    display: "flex", gap: 10, marginBottom: 20,
-  },
-
-  /* CARDS */
-  contentGrid: {
-    display: "grid", gridTemplateColumns: "1fr 380px", gap: 16,
-  },
-  card: {
-    background: "#fff", border: "1px solid #ebebea",
-    borderRadius: 12, padding: "20px 24px",
-  },
-  cardHeader: {
-    display: "flex", justifyContent: "space-between",
-    alignItems: "center", marginBottom: 16,
-  },
-  cardLabel: {
-    fontFamily: "'JetBrains Mono',monospace", fontSize: 10,
-    color: "#aaa", letterSpacing: 1, textTransform: "uppercase",
-  },
-  cardLink: {
-    fontFamily: "'JetBrains Mono',monospace", fontSize: 11,
-    color: "#888", cursor: "pointer",
-  },
-
-  /* BADGES */
-  winBadge: {
-    fontFamily: "'JetBrains Mono',monospace", fontSize: 10, fontWeight: 700,
-    background: "#f0faf5", color: "#0f6e56",
-    padding: "3px 8px", borderRadius: 4, letterSpacing: 0.5,
-  },
-  lossBadge: {
-    fontFamily: "'JetBrains Mono',monospace", fontSize: 10, fontWeight: 700,
-    background: "#fff0f0", color: "#a32d2d",
-    padding: "3px 8px", borderRadius: 4, letterSpacing: 0.5,
-  },
-
-  /* EMPTY */
-  emptyState: {
-    display: "flex", flexDirection: "column",
-    alignItems: "center", padding: "32px 0", textAlign: "center",
-  },
-  emptyIcon: { fontSize: 36, marginBottom: 12 },
-  emptyText: { fontFamily: "'JetBrains Mono',monospace", fontSize: 13, color: "#aaa" },
-
-  /* BUTTONS */
-  btnPrimary: {
-    background: "#0a0a0a", color: "#fff",
-    padding: "10px 20px", borderRadius: 8,
-    fontFamily: "'Syne',sans-serif", fontWeight: 700, fontSize: 14,
-    border: "none", cursor: "pointer",
-  },
-  btnOutline: {
-    background: "transparent", color: "#0a0a0a",
-    padding: "10px 20px", borderRadius: 8,
-    fontFamily: "'Syne',sans-serif", fontWeight: 700, fontSize: 14,
-    border: "1px solid #0a0a0a", cursor: "pointer",
-  },
-  btnDanger: {
-    background: "transparent", color: "#a32d2d",
-    padding: "10px 20px", borderRadius: 8,
-    fontFamily: "'Syne',sans-serif", fontWeight: 700, fontSize: 14,
-    border: "1px solid #fcc", cursor: "pointer",
-  },
-
-  /* LANG TAG */
-  langTag: {
-    fontFamily: "'JetBrains Mono',monospace", fontSize: 11,
-    background: "#f5f5f3", color: "#555",
-    padding: "4px 10px", borderRadius: 6,
-    border: "1px solid #e8e8e8",
-  },
-
-  /* MODAL */
-  modalHeader: {
-    display: "flex", justifyContent: "space-between",
-    alignItems: "flex-start", marginBottom: 24,
-  },
-  modalTitle: {
-    fontFamily: "'Syne',sans-serif", fontSize: 22,
-    fontWeight: 800, color: "#0a0a0a", letterSpacing: -0.5, marginTop: 4,
-  },
-  closeBtn: {
-    background: "transparent", border: "none",
-    fontSize: 18, color: "#aaa", cursor: "pointer", padding: "0 4px",
-    fontFamily: "'Syne',sans-serif",
-  },
-  matchTypeGrid: {
-    display: "grid", gridTemplateColumns: "repeat(3,1fr)",
-    gap: 10, marginBottom: 4,
-  },
-  matchTag: {
-    fontFamily: "'JetBrains Mono',monospace", fontSize: 9,
-    background: "#f0f0ee", color: "#888",
-    padding: "2px 6px", borderRadius: 4, letterSpacing: 0.5,
-  },
-  langGrid: {
-    display: "flex", flexWrap: "wrap", gap: 6,
-  },
-  roomInput: {
-    flex: 1, padding: "11px 14px",
-    background: "#f9f9f9", border: "1px solid #e0e0e0",
-    borderRadius: 8, fontFamily: "'JetBrains Mono',monospace",
-    fontSize: 14, fontWeight: 700, color: "#0a0a0a",
-    letterSpacing: 2,
-  },
-  modalFooter: {
-    display: "flex", justifyContent: "space-between",
-    alignItems: "center", marginTop: 24,
-    paddingTop: 20, borderTop: "1px solid #f0f0ee",
-  },
-
-  /* SEARCHING */
-  searchingState: {
-    display: "flex", flexDirection: "column",
-    alignItems: "center", padding: "40px 0", textAlign: "center",
-  },
-  searchRing: {
-    width: 60, height: 60, borderRadius: "50%",
-    border: "3px solid #e0e0e0", borderTopColor: "#0a0a0a",
-    animation: "spin 0.8s linear infinite", marginBottom: 24,
-  },
-  searchTitle: {
-    fontFamily: "'Syne',sans-serif", fontSize: 20, fontWeight: 800,
-    color: "#0a0a0a", marginBottom: 6,
-  },
-  searchSub: {
-    fontFamily: "'JetBrains Mono',monospace", fontSize: 12, color: "#888",
-  },
-
-  /* PROFILE DRAWER */
-  profileAvatar: {
-    width: 52, height: 52, borderRadius: "50%",
-    background: "#0a0a0a", color: "#fff",
-    display: "flex", alignItems: "center", justifyContent: "center",
-    fontFamily: "'Syne',sans-serif", fontSize: 22, fontWeight: 800,
-    flexShrink: 0,
-  },
-  profileStats: {
-    display: "grid", gridTemplateColumns: "1fr 1fr",
-    gap: 1, background: "#ebebea",
-    border: "1px solid #ebebea", borderRadius: 10, overflow: "hidden",
-  },
-  profileStat: {
-    background: "#fff", padding: "14px 16px",
-    display: "flex", flexDirection: "column", gap: 4,
-  },
-};
